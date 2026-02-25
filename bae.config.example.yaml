@@ -1,0 +1,27 @@
+# Copy to bae.config.yaml and tweak. Values can be overridden by CLI flags.
+product_name: "DATALIN Data Lineage by Manta"
+account: bigblue
+filters:
+  releases:
+    - "Q1 2026 - IKC 5.3.1 and DI 2.3.1"
+    - "February SaaS"
+    - "June 2026 - IKC 5.4 and DI 2.4"
+    - "Plan to remove -- Q3 2026"
+    - "Dec 2026 - IKC 5.5 and DI 2.5"
+  tags_include:
+    - scanners
+  tags_one_of:
+    - "lineage dev commited"
+  pm_owner: "wojtek smajda"
+fields:
+  solution_value_statement: solution_value_statement
+  risk_status: risk_status
+  commitment: commitment
+  master_epic: master_epic
+  github_link:
+    - github_link
+    - integrations_to
+  product_management_owner: product_management_owner
+  development_owner: development_owner
+  ibm_software_gtm_themes: ibm_software_gtm_themes
+  priority_data_ai: priority_data_ai
