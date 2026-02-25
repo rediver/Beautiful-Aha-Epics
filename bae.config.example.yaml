@@ -1,6 +1,19 @@
 # Copy to bae.config.yaml and tweak. Values can be overridden by CLI flags.
-product_name: "DATALIN Data Lineage by Manta"
+product_name: "Data Lineage by Manta"
+product_path:
+  - IBM
+  - IBM Software
+  - Data Platform
+  - Data Fabric
+  - Data Intelligence & Data Integration
+  - Data Intelligence
+  - Master Data Management Family
+  - Data Lineage by Manta
 account: bigblue
+auth:
+  # Put your Aha! API token here for local dev (file is not committed if in .gitignore).
+  # Alternatively, set BAE_AHA_TOKEN env var.
+  token: ""
 filters:
   releases:
     - "Q1 2026 - IKC 5.3.1 and DI 2.3.1"
