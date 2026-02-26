@@ -362,6 +362,8 @@ def check(
                 "name": lambda r: (r.get("name") or "").lower(),
                 "release": lambda r: (r.get("release") or "").lower(),
                 "status": lambda r: (r.get("status") or "").lower(),
+                "risk": lambda r: (r.get("risk_status") or "").lower(),
+                "risk_status": lambda r: (r.get("risk_status") or "").lower(),
                 "pm_owner": lambda r: (r.get("pm_owner") or "").lower(),
                 "dev_owner": lambda r: (r.get("dev_owner") or "").lower(),
                 "priority": lambda r: (r.get("priority") or "").lower(),
