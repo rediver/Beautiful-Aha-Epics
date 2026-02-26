@@ -36,7 +36,8 @@ def table_issues(items: Iterable[dict]) -> Table:
     t.add_column("Ref", style="bold red")
     t.add_column("Name", style="white")
     t.add_column("Problems", style="yellow")
+    t.add_column("Release", style="magenta")
     for it in items:
         problems = "\n".join(f"• [red]{p}[/]" for p in it.get("problems", []))
-        t.add_row(it.get("reference_num", "?"), it.get("name", ""), problems)
+        t.add_row(it.get("reference_num", "?"), it.get("name", ""), problems, it.get("release_name", ""))
     return t

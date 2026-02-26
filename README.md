@@ -48,6 +48,22 @@ fields:
 ```bash
 ./beauty
 ```
+- Verification mode (show only the verification table with all validated fields):
+```bash
+./beauty --verify
+# or
+./beauty -v
+```
+- Sort output (works with verify and base results):
+```bash
+./beauty -v -s status      # by status
+./beauty -v -s release     # by release name
+./beauty -s ref            # by reference in base report
+```
+- Debug logs (verbose output for troubleshooting):
+```bash
+./beauty --debug
+```
 - Help (flags for the `check` command):
 ```bash
 ./beauty --help

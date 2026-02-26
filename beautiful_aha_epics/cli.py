@@ -11,7 +11,7 @@ import stat
 
 from .client import AhaClient
 from .config import AppConfig
-from .checks import evaluate_epic, evaluate_feature
+from .checks import evaluate_epic, evaluate_feature, _custom_to_dict, _norm_text
 from .util import banner, table_ok, table_issues
 from rich.table import Table
 from typing import Set
@@ -50,7 +50,9 @@ def check(
     tags_one_of: Optional[List[str]] = typer.Option(None, help="At least one of these tags must be present. If omitted, use config."),
     pm_owner: Optional[str] = typer.Option(None, help="Expected Product Management owner value (custom field)"),
     json_output: bool = typer.Option(False, "--json", help="Print machine JSON instead of fancy tables"),
-    verbose: bool = typer.Option(False, "-v", help="Verbose logs"),
+    verify: bool = typer.Option(False, "--verify", "-v", help="Show a verification table with all fields we validate (no description text, only a checkmark)"),
+    sort_by: Optional[str] = typer.Option(None, "--sort", "-s", help="Sort results by column. Examples: ref,name,release,status,pm_owner,dev_owner,priority"),
+    debug: bool = typer.Option(False, "--debug", help="Verbose logs for troubleshooting"),
 ):
     """Validate epics and print a glorious, colorful report with emojis and ASCII art."""
     banner("BeautifulEpics")
@@ -117,7 +119,7 @@ def check(
     raw_epics = []
     selected_features: List[dict] = []
     if resolved_release_ids:
-        if verbose:
+        if debug:
             console.log(f"Fetching epics for release IDs: {', '.join([str(x) for x in resolved_release_ids])}")
         # Prefilter features on server by required 'scanners' tag to cut volume
         req_all = [t.lower() for t in (cfg.filters.tags_include if tags is None else (tags or []))]
@@ -152,7 +154,7 @@ def check(
             if one_ok and pm_ok and ff:
                 selected_features.append(ff)
         used_feature_tag_filter = True
-        if verbose:
+        if debug:
             console.log(f"Feature-tag selected features: {len(selected_features)} (from {len(details)})")
     else:
         # Fallback path (no release_ids): scan product epics (unchanged)
@@ -167,7 +169,7 @@ def check(
                     continue
                 raw_epics.append(e)
 
-    if verbose:
+    if debug:
         console.log(f"Fetched {len(raw_epics)} epics (pre-filter)")
 
     # Fetch full details for each epic now for accurate checks.
@@ -190,7 +192,7 @@ def check(
             return (name or "").strip().lower() in wanted
         before = len(full_epics)
         full_epics = [e for e in full_epics if rel_ok(e)]
-        if verbose:
+        if debug:
             console.log(f"After release filter: {len(full_epics)} / {before}")
 
     # Tags filter on EPIC only if we did NOT already select by feature tags
@@ -201,7 +203,7 @@ def check(
     before_tags = len(full_epics)
     if not (resolved_release_ids and ('used_feature_tag_filter' in locals() and used_feature_tag_filter)):
         full_epics = [e for e in full_epics if has_tags(e)]
-    if verbose:
+    if debug:
         console.log(f"After tags filter: {len(full_epics)} / {before_tags} (need all: {required_tags or '[]'})")
 
     # Evaluate
@@ -244,15 +246,158 @@ def check(
                 "problems": res.problems,
             })
 
+    # Optional sorting of base results (by simple columns available)
+    if sort_by and not verify:
+        keymap = {
+            "ref": lambda r: (r.get("reference_num") or "").lower(),
+            "name": lambda r: (r.get("name") or "").lower(),
+            "release": lambda r: (r.get("release_name") or "").lower(),
+            "problems": lambda r: len(r.get("problems") or []),
+        }
+        kf = keymap.get((sort_by or "").strip().lower())
+        if kf:
+            results = sorted(results, key=kf)
+
     beautiful = [r for r in results if r["ok"]]
     not_beautiful = [r for r in results if not r["ok"]]
 
-    if json_output:
+    if json_output and not verify:
         typer.echo(json.dumps({"ok": beautiful, "not_ok": not_beautiful}, ensure_ascii=False, indent=2))
         raise typer.Exit(0)
 
     # Pretty print with emojis and colors
     console.rule("🦋 Results 🦋")
+
+    # Optional verification view with all fields
+    if verify:
+        def _status_value(obj: dict) -> str:
+            status = ((obj.get("workflow_status") or {}).get("name") or obj.get("status") or obj.get("workflow_status_name") or "").strip()
+            wst = obj.get("workflow_status_times") or []
+            for rec in wst or []:
+                if rec and rec.get("ended_at") in (None, "") and rec.get("status_name"):
+                    status = rec.get("status_name")
+            return str(status or "")
+
+        def _desc_ok(obj: dict, is_feature: bool) -> bool:
+            if is_feature:
+                desc = obj.get("description", {})
+                body = (desc or {}).get("body") if isinstance(desc, dict) else desc
+                return bool(_norm_text(body))
+            else:
+                return bool(_norm_text(obj.get("description")))
+
+        def _github_present(obj: dict, custom: dict) -> bool:
+            # integration_fields first
+            for f in obj.get("integration_fields", []) or []:
+                vals = [f.get("url"), f.get("name"), f.get("value"), f.get("service_name")]
+                if any(((v or "").lower().find("github") >= 0) or ("git" in (v or '').lower() and "http" in (v or '').lower()) for v in vals):
+                    return True
+            # custom fields mapping
+            for k in cfg.fields.github_link:
+                v = str(custom.get(k) or "")
+                if ("github" in v.lower()) or ("git" in v.lower() and "http" in v.lower()):
+                    return True
+            return False
+
+        def _has_scanners(obj: dict) -> bool:
+            tags = set([str(t).strip().lower() for t in (obj.get("tags") or [])])
+            return "scanners" in tags
+
+        def _release_name(obj: dict) -> str:
+            rel = obj.get("release")
+            if isinstance(rel, dict):
+                return str(rel.get("name") or "")
+            return str(obj.get("release_name") or "")
+
+        def _release_dates_ok(obj: dict) -> bool:
+            rel = obj.get("release")
+            if isinstance(rel, dict):
+                return bool(rel.get("start_date") and rel.get("release_date"))
+            # If only name present, we don't know dates -> treat as False when verify expects both
+            return False
+
+        def _pm_owner(custom: dict) -> str:
+            v = custom.get(cfg.fields.product_management_owner)
+            if isinstance(v, list):
+                return ", ".join([str(x) for x in v])
+            return str(v or "")
+
+        def _mk_row(obj: dict, is_feature: bool) -> dict:
+            custom = _custom_to_dict(obj.get("custom_fields"))
+            row = {
+                "ref": str(obj.get("reference_num") or obj.get("reference_num_with_prefix") or obj.get("id") or ""),
+                "name": str(obj.get("name") or obj.get("title") or ""),
+                "release": _release_name(obj),
+                "desc_ok": "✅" if _desc_ok(obj, is_feature) else "❌",
+                "status": _status_value(obj),
+                "solution_value": str(custom.get(cfg.fields.solution_value_statement) or (custom.get("client_value_statement") if is_feature else "") or ""),
+                "risk_status": str(custom.get(cfg.fields.risk_status) or ""),
+                "commitment": str(custom.get(cfg.fields.commitment) or (custom.get("committed") if is_feature else "") or ""),
+                "master_epic": (
+                    "yes" if (is_feature and (isinstance(obj.get("epic"), dict) or isinstance(obj.get("master_feature"), dict))) else str(custom.get(cfg.fields.master_epic) or "")
+                ),
+                "github": "✅" if _github_present(obj, custom) else "❌",
+                "tag_scanners": "✅" if _has_scanners(obj) else "❌",
+                "pm_owner": _pm_owner(custom),
+                "dev_owner": str(custom.get(cfg.fields.development_owner) or ""),
+                "gtm_themes": str(custom.get(cfg.fields.ibm_software_gtm_themes) or ""),
+                "priority": str(custom.get(cfg.fields.priority_data_ai) or custom.get("priority") or ""),
+                "rel_dates_ok": "✅" if _release_dates_ok(obj) else "❌",
+            }
+            return row
+
+        # Build rows from the same evaluation pool as we used above
+        verify_rows = []
+        if resolved_release_ids and ('used_feature_tag_filter' in locals() and used_feature_tag_filter):
+            for f in selected_features:
+                verify_rows.append(_mk_row(f, is_feature=True))
+        else:
+            for e in full_epics:
+                verify_rows.append(_mk_row(e, is_feature=False))
+
+        # Sorting for verify view
+        if sort_by:
+            keymap_v = {
+                "ref": lambda r: (r.get("ref") or "").lower(),
+                "name": lambda r: (r.get("name") or "").lower(),
+                "release": lambda r: (r.get("release") or "").lower(),
+                "status": lambda r: (r.get("status") or "").lower(),
+                "pm_owner": lambda r: (r.get("pm_owner") or "").lower(),
+                "dev_owner": lambda r: (r.get("dev_owner") or "").lower(),
+                "priority": lambda r: (r.get("priority") or "").lower(),
+            }
+            kf = keymap_v.get((sort_by or "").strip().lower())
+            if kf:
+                verify_rows = sorted(verify_rows, key=kf)
+
+        # Render table
+        vt = Table(title="🔎 Verification (all items & field values)", expand=True, show_lines=False)
+        vt.add_column("Ref", style="cyan", no_wrap=True)
+        vt.add_column("Name", style="white")
+        vt.add_column("Release", style="magenta")
+        vt.add_column("RelDates", style="magenta", no_wrap=True)
+        vt.add_column("Desc", style="white", no_wrap=True)
+        vt.add_column("Status", style="white", no_wrap=True)
+        vt.add_column("Solution Value", style="white")
+        vt.add_column("Risk", style="white")
+        vt.add_column("Commitment", style="white")
+        vt.add_column("MasterEpic", style="white", no_wrap=True)
+        vt.add_column("GitHub", style="white", no_wrap=True)
+        vt.add_column("scanners", style="white", no_wrap=True)
+        vt.add_column("PM Owner", style="white")
+        vt.add_column("Dev Owner", style="white")
+        vt.add_column("GTM Themes", style="white")
+        vt.add_column("Priority", style="white", no_wrap=True)
+        for r in verify_rows:
+            vt.add_row(
+                r.get("ref",""), r.get("name",""), r.get("release",""), r.get("rel_dates_ok",""), r.get("desc_ok",""),
+                r.get("status",""), r.get("solution_value",""), r.get("risk_status",""), r.get("commitment",""),
+                str(r.get("master_epic","")), r.get("github",""), r.get("tag_scanners",""), r.get("pm_owner",""),
+                r.get("dev_owner",""), r.get("gtm_themes",""), r.get("priority",""),
+            )
+        console.print(vt)
+        # In verify mode, print only the verification table and exit without OK/Issues summary
+        raise typer.Exit(0)
 
     if not beautiful and not not_beautiful:
         console.print("[yellow]🤷 No epics matched your filters.[/] [dim](Try relaxing releases/tags or check product path.)[/]")
