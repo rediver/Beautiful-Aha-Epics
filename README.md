@@ -1,16 +1,5 @@
-# BeautifulEpics (🦋✨)
-A colorful CLI for keeping Aha! epics beautiful — fast and emoji‑friendly.
-
-```
-💖  💖  💖  💖  💖
-   ____                 _           _   _ _       _   _             
-  | __ )  ___  __ _  __| | ___ _ __| |_(_) | ___ | | | | ___  _ __  
-  |  _ \ / _ \/ _` |/ _` |/ _ \ '__| __| | |/ _ \| |_| |/ _ \| '_ \ 
-  | |_) |  __/ (_| | (_| |  __/ |  | |_| | |  __/|  _  | (_) | | | |
-  |____/ \___|\__,_|\__,_|\___|_|   \__|_|_|\___|_| |_|\___/|_| |_|
-        B e a u t i f u l   A h a   E p i c s
-💖  💖  💖  💖  💖
-```
+# BeautifulEpics✨
+A colorful CLI for keeping Aha! epics beautiful 
 
 ## Installation
 - Python 3.10+
