@@ -17,7 +17,15 @@ from rich.table import Table
 from typing import Set
 import re
 
-app = typer.Typer(add_completion=False, help="Beautiful Aha Epics ✨🦋 – keep your Aha! epics beautiful per IBM PM checks")
+app = typer.Typer(
+    add_completion=False,
+    help=(
+        "BeautifulEpics – colorful CLI to keep your Aha! items beautiful.\n\n"
+        "Defaults: reads bae.config.yaml (account/product_key/release_ids/fields).\n"
+        "When run via 'beauty' with no args, executes 'check'. Use 'beauty --help' to see 'check' flags.\n"
+        "Env: BAE_AHA_ACCOUNT, BAE_AHA_TOKEN (or config.auth.token), BAE_MAX_CONCURRENCY (default 15)."
+    ),
+)
 console = Console()
 
 DEFAULT_CFG_PATH = "bae.config.yaml"
@@ -32,7 +40,7 @@ def init_config(path: str = typer.Option("bae.config.example.yaml", help="Where 
 
 @app.command()
 def check(
-    product_name: Optional[str] = typer.Option(None, help="Aha! Product/Workspace name (leaf)"),
+    product_name: Optional[str] = typer.Option(None, help="Aha! Product/Workspace name (leaf). Default: config.product_name"),
     product_key: Optional[str] = typer.Option(None, help="Aha! product key from URL, e.g., DATALIN"),
     product_path: List[str] = typer.Option([], "--product-path", help="Path segments to the product (from root to leaf). Provide multiple --product-path flags in order."),
     releases: Optional[List[str]] = typer.Option(None, "--releases", help="Release names to include (multiple). If omitted, use config."),

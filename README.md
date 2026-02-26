@@ -1,113 +1,114 @@
-# Beautiful Aha Epics (🦋✨)
-Keep your Aha! epics beautiful, colorful and IBM‑PM compliant.
+# BeautifulEpics (🦋✨)
+A colorful CLI for keeping Aha! epics beautiful — fast and emoji‑friendly.
 
 ```
-██████  ███████  █████  ██    ██ ███████ ████████ ██    ██ ██      
-██   ██ ██      ██   ██ ██    ██ ██         ██     ██  ██  ██      
-██████  █████   ███████ ██    ██ ███████    ██      ████   ██      
-██   ██ ██      ██   ██  ██  ██       ██    ██       ██    ██      
-██   ██ ███████ ██   ██   ████   ███████    ██       ██    ███████ 
+💖  💖  💖  💖  💖
+   ____                 _           _   _ _       _   _             
+  | __ )  ___  __ _  __| | ___ _ __| |_(_) | ___ | | | | ___  _ __  
+  |  _ \ / _ \/ _` |/ _` |/ _ \ '__| __| | |/ _ \| |_| |/ _ \| '_ \ 
+  | |_) |  __/ (_| | (_| |  __/ |  | |_| | |  __/|  _  | (_) | | | |
+  |____/ \___|\__,_|\__,_|\___|_|   \__|_|_|\___|_| |_|\___/|_| |_|
+        B e a u t i f u l   A h a   E p i c s
+💖  💖  💖  💖  💖
 ```
 
 ## Installation
 - Python 3.10+
-- Install deps:
+- Install dependencies:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Configuration
-- Copy the example and edit it:
-```bash
-cp bae.config.example.yaml bae.config.yaml
-```
-- Set your Aha! account and token in `bae.config.yaml`:
+## Configuration (bae.config.yaml)
+Minimal example for DATALIN:
 ```yaml
 account: bigblue
+product_key: DATALIN
 auth:
-  token: "<YOUR_AHA_API_TOKEN>"
-product_name: "Data Lineage by Manta"
-product_path: [
-  "IBM",
-  "IBM Software",
-  "Data Platform",
-  "Data Fabric",
-  "Data Intelligence & Data Integration",
-  "Data Intelligence",
-  "Master Data Management Family",
-  "Data Lineage by Manta"
-]
+  token: "<YOUR_AHA_API_TOKEN>"   # or via env: BAE_AHA_TOKEN
 filters:
-  releases: ["June 2026 - IKC 5.4 and DI 2.4"]
+  # Default releases — used by 'beauty' without flags
+  release_ids:
+    - "7515164732697196802"  # June 2026 - IKC 5.4 and DI 2.4
+    - "7549195962065426819"  # Planned to remove — Q3 2026
+    - "7549196114077775538"  # Dec 2026 - IKC 5.5 and DI 2.5
+  # Tag filter on FEATURES (children):
   tags_include: ["scanners"]
-  tags_one_of: ["lineage dev commited"]
-  pm_owner: "wojtek smajda"
-```
-- Alternatively, you can keep the token in an env var instead of the file:
-```bash
-export BAE_AHA_TOKEN=<YOUR_AHA_API_TOKEN>
-export BAE_AHA_ACCOUNT=bigblue
+  tags_one_of: []
+  pm_owner: "wojciech.smajda@ibm.com"
+fields:
+  solution_value_statement: client_value_statement
+  risk_status: risk_status
+  commitment: commitment
+  master_epic: ibm_software_only_managed_tags_master_epics
+  github_link: [github_link, integrations_to]
+  product_management_owner: product_management_owner
+  development_owner: development_owner
+  ibm_software_gtm_themes: ibm_software_gtm_themes
+  priority_data_ai: priority
 ```
 
-To save the token interactively into `bae.config.yaml`:
-```bash
-./bin/bae auth-set-token
-```
+## Environment (optional)
+- BAE_AHA_ACCOUNT, BAE_AHA_TOKEN — authentication
+- BAE_MAX_CONCURRENCY — parallelism for fetching features (default 15)
 
 ## Usage
-- The simplest way (reads `bae.config.yaml`):
+- Easiest way (reads config and runs `check`):
 ```bash
-./check
+./beauty
 ```
-- Or explicitly (name):
+- Help (flags for the `check` command):
 ```bash
-./bin/bae check --product-name "Data Lineage by Manta"
+./beauty --help
 ```
-- Or explicitly (full path, multiple flags in order):
+- Other commands (examples):
 ```bash
-./bin/bae check \
-  --product-path "IBM" \
-  --product-path "IBM Software" \
-  --product-path "Data Platform" \
-  --product-path "Data Fabric (17DSR)" \
-  --product-path "Data Intelligence & Data Integration" \
-  --product-path "Data Intelligence (20A11)" \
-  --product-path "Master Data Management Family" \
-  --product-path "Data Lineage by Manta"
-```
-- JSON for scripts/CI:
-```bash
-./bin/bae check --json
+./beauty list-features 7515164732697196802
+./beauty show-feature DATALIN-457 --raw
+./beauty find-epic "DATALIN-457"
 ```
 
-Exit codes:
-- 0 — all checked epics are beautiful ✨
-- 1 — some epics need love 💔
-- 2 — configuration/auth error ⚠️
+## Exit codes
+- 0 — everything is beautiful ✨
+- 1 — issues found 💔
+- 2 — configuration/authentication error ⚠️
 
-## Filters (easy to tweak)
-- Releases: names must match Aha! release names in the product.
-- Tags: must include all from `tags_include` and at least one from `tags_one_of`.
-- Product Management owner expected value (`filters.pm_owner`).
-- Field mappings for your tenant can be customized under `fields`.
-
-## Business logic (what makes an epic NOT beautiful)
-An epic is flagged if ANY of the below is true:
-- missing description
-- status equals "New"
-- empty Solution Value Statement
-- empty risk status
-- empty Commitment
-- empty Release
-- empty Master Epic
-- no GitHub integration/link present
-- missing tag `scanners` OR none of [`lineage dev commited`]
-- Product Management owner empty or not matching expected
+## What we validate (feature‑level)
+A feature (specific “epic”) is marked as NOT‑beautiful if any of the following is true:
+- missing description (empty `description.body` after stripping HTML)
+- current status (from `workflow_status_times`) == New
+- empty Solution Value Statement (`client_value_statement`)
+- empty Risk Status
+- empty Commitment (`commitment/committed`)
+- missing Release or missing `start_date`/`release_date`
+- missing Master Epic (relation `epic/master_feature` or managed tag)
+- no GitHub link/integration (including Enterprise)
+- missing required `scanners` tag (on the feature)
+- Product Management owner empty OR different from `pm_owner` (from config)
 - Development owner empty
 - IBM Software GTM Themes empty
-- Priority (Data & AI) empty or not an integer 1–10
+- Priority (Data & AI) empty or outside 1..10
+
+## Fast selection of items to check
+- From releases in `filters.release_ids` we fetch features with the `scanners` tag (server‑side filter) and concurrently pull details.
+- We include only those where PM owner email is empty OR equals "wojciech.smajda@ibm.com".
+
+## Tips
+- Best to keep the token in env (`BAE_AHA_TOKEN`) or set it interactively: `./bin/bae auth-set-token`.
+- If you want to speed things up: `export BAE_MAX_CONCURRENCY=25`.
+- Common failure reasons:
+  - empty Risk Status
+  - empty Commitment
+  - empty Release
+  - empty Master Epic
+  - no GitHub integration/link present
+  - missing `scanners` tag OR none of [`lineage`, `dev`, `commited`]
+  - Product Management owner empty or not matching expected
+  - Development owner empty
+  - IBM Software GTM Themes empty
+  - Priority (Data & AI) empty or not an integer 1–10
 
 ## Notes
 - Token can be stored in `bae.config.yaml` (local only) or via env var `BAE_AHA_TOKEN`. Env var wins.
