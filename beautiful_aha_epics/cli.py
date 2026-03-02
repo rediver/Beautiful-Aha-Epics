@@ -549,9 +549,121 @@ def list_releases_cmd(
     t = Table(title="📦 Releases", expand=True)
     t.add_column("ID", style="cyan")
     t.add_column("Name", style="white")
+    t.add_column("Ref", style="green")
     for r in releases:
-        t.add_row(str(r.get("id")), r.get("name", ""))
+        ref = r.get("reference_num") or r.get("reference_num_with_prefix") or ""
+        t.add_row(str(r.get("id")), r.get("name", ""), str(ref))
     console.print(t)
+
+
+@app.command("add-release")
+def add_release_cmd(
+    release: str = typer.Argument(..., help="Release ID, reference (e.g., DATALIN-R-29), or exact name"),
+    product_name: Optional[str] = typer.Option(None, help="Override product name (else from config)"),
+    product_key: Optional[str] = typer.Option(None, help="Override product key (else from config)"),
+    product_path: List[str] = typer.Option([], "--product-path", help="Override product path (else from config)"),
+    cfg_path: str = typer.Option(DEFAULT_CFG_PATH, "--config", help="bae.config.yaml path"),
+    debug: bool = typer.Option(False, "--debug", help="Verbose logs"),
+):
+    """Resolve a release and append its numeric ID to filters.release_ids in bae.config.yaml.
+
+    Examples:
+      • beauty add-release 7515164732697196802
+      • beauty add-release DATALIN-R-29
+      • beauty add-release "June 2026 - IKC 5.4 and DI 2.4"
+    """
+    banner("BeautifulEpics")
+    cfg = AppConfig.load()
+
+    account = cfg.account or os.getenv("BAE_AHA_ACCOUNT")
+    token = cfg.auth.token or os.getenv("BAE_AHA_TOKEN") or os.getenv("AHA_API_TOKEN")
+    if not account or not token:
+        typer.echo("Missing account/token. See README.", err=True)
+        raise typer.Exit(2)
+
+    client = AhaClient(account=account, token=token)
+
+    # Resolve product via overrides > config
+    product_name = product_name or cfg.product_name
+    product_key = product_key or cfg.product_key
+    product_path = product_path or cfg.product_path
+
+    product = None
+    if product_path:
+        product = client.find_product_by_path(product_path)
+    if not product and product_key:
+        product = client.find_product_by_key(product_key)
+    if not product and product_name:
+        product = client.find_product_by_name(product_name)
+    if not product:
+        typer.echo("Product not found.", err=True)
+        raise typer.Exit(2)
+
+    rid: Optional[str] = None
+    raw = (release or "").strip()
+    if raw.isdigit():
+        rid = raw
+    else:
+        # Scan releases and try to match by reference code, name, or URL fragment
+        rels = client.list_releases_for_product(product["id"]) or []
+        target_norm = (raw or "").strip().lower()
+        def _norm(s: Optional[str]) -> str:
+            import re as _re
+            return _re.sub(r"\s+", " ", (s or "").strip()).lower()
+        for r in rels:
+            candidates = set()
+            # Reference-like fields
+            for k in ("reference_num", "reference_num_with_prefix", "reference", "ref", "key"):
+                v = r.get(k)
+                if isinstance(v, str) and v:
+                    candidates.add(v.strip())
+            # Name
+            nm = r.get("name")
+            if isinstance(nm, str) and nm:
+                candidates.add(nm.strip())
+            # URL fragments
+            for k in ("url", "html_url", "path"):
+                u = r.get(k)
+                if isinstance(u, str) and u:
+                    if raw in u or raw in u.split("/")[-1]:
+                        rid = str(r.get("id")) if r.get("id") else None
+                        break
+            if rid:
+                break
+            # Compare normalized tokens
+            cand_norm = {_norm(c) for c in candidates if c}
+            if target_norm in cand_norm:
+                rid = str(r.get("id")) if r.get("id") else None
+                break
+            # Also allow exact raw containment in any candidate (best-effort)
+            for c in candidates:
+                if raw and raw.lower() == c.strip().lower():
+                    rid = str(r.get("id")) if r.get("id") else None
+                    break
+            if rid:
+                break
+
+    if not rid:
+        console.print("[red]Release not found.[/]")
+        console.print("Use 'beauty list-releases' to see IDs and names, then re-run with the numeric ID or exact name.")
+        raise typer.Exit(2)
+
+    # Load and update YAML
+    import yaml as _yaml
+    data = {}
+    if os.path.exists(cfg_path):
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            data = _yaml.safe_load(f) or {}
+    data.setdefault("filters", {})
+    ids = [str(x) for x in (data["filters"].get("release_ids") or [])]
+    if str(rid) not in ids:
+        ids.append(str(rid))
+    data["filters"]["release_ids"] = ids
+
+    with open(cfg_path, "w", encoding="utf-8") as f:
+        _yaml.safe_dump(data, f, sort_keys=False, allow_unicode=True)
+
+    console.print(f"Added release ID [bold]{rid}[/] to filters.release_ids in [bold]{cfg_path}[/] ✅")
 
 
 @app.command("list-epics")

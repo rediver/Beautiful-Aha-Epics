@@ -73,7 +73,14 @@ fields:
 ./beauty list-features 7515164732697196802
 ./beauty show-feature DATALIN-457 --raw
 ./beauty find-epic "DATALIN-457"
+./beauty list-releases
+./beauty add-release DATALIN-R-29
+# also works with full name or numeric ID:
+./beauty add-release "June 2026 - IKC 5.4 and DI 2.4"
+./beauty add-release 7515164732697196802
 ```
+
+- `add-release` resolves a release by reference/name/ID and appends its numeric ID to `filters.release_ids` in `bae.config.yaml`.
 
 ## Exit codes
 - 0 — everything is beautiful ✨
