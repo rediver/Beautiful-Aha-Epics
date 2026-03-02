@@ -26,7 +26,7 @@ filters:
   # Tag filter on FEATURES (children):
   tags_include: ["scanners"]
   tags_one_of: []
-  pm_owner: "wojciech.smajda@ibm.com"
+  pm_owner: "wojciech.smajda@ibm.com, Yurii.Plakhtii@ibm.com"  # comma-separated list allowed
 fields:
   solution_value_statement: client_value_statement
   risk_status: risk_status

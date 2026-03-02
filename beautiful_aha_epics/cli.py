@@ -121,41 +121,81 @@ def check(
     if resolved_release_ids:
         if debug:
             console.log(f"Fetching epics for release IDs: {', '.join([str(x) for x in resolved_release_ids])}")
-        # Prefilter features on server by required 'scanners' tag to cut volume
-        req_all = [t.lower() for t in (cfg.filters.tags_include if tags is None else (tags or []))]
-        server_tag = req_all[0] if req_all else None
+        # Collect ALL features from the releases (no server-side tag prefilter)
         feature_ids: List[str] = []
+        per_release_counts = {}
         for rid in resolved_release_ids:
-            for f in client.iter_release_features(rid, tag=server_tag):
+            count = 0
+            for f in client.iter_release_features(rid, tag=None):
                 feature_ids.append(str(f.get("id")))
+                count += 1
+            per_release_counts[str(rid)] = count
+        if debug:
+            console.log(f"Feature IDs collected (no server tag prefilter): {len(feature_ids)} | per release: " + ", ".join([f"{k}={v}" for k,v in per_release_counts.items()]))
         # fetch details in parallel
         concurrency = int(os.getenv("BAE_MAX_CONCURRENCY", "15"))
         details = client.fetch_features_many(feature_ids, concurrency=concurrency)
+        if debug:
+            console.log(f"Fetched feature details: {len(details)} (concurrency={concurrency})")
         # apply tag policy (one-of) locally; the 'all' scanners already filtered on server
+        req_all = [t.lower() for t in (cfg.filters.tags_include if tags is None else (tags or []))]
         req_one = [t.lower() for t in (cfg.filters.tags_one_of if tags_one_of is None else (tags_one_of or []))]
-        expected_pm = (pm_owner or cfg.filters.pm_owner or "").strip().lower()
+        # Support CSV in pm_owner from CLI/config
+        pm_raw = pm_owner or cfg.filters.pm_owner or ""
+        expected_pms_raw: List[str] = [p.strip() for p in str(pm_raw).split(",") if p and p.strip()]
+        expected_pms_l = [p.lower() for p in expected_pms_raw]
+        kept_by_all = 0
+        kept_by_one_of = 0
+        kept_by_pm = 0
         for ff in details:
             tags_set = set([str(t).lower() for t in (ff.get("tags") or [])])
+            all_ok = (all(t in tags_set for t in req_all) if req_all else True)
             one_ok = (any(t in tags_set for t in req_one) if req_one else True)
-            # PM owner filter: include only if empty OR contains expected_pm
+            # PM owner filter: include only if empty OR contains ANY of expected_pms
             pm_emails: List[str] = []
             cfs = ff.get("custom_fields") or []
             if isinstance(cfs, list):
                 for it in cfs:
                     if isinstance(it, dict) and (it.get("key") or it.get("name")) in ("product_management_owner", "pm_owner", "product_management_owner_email"):
                         ev = it.get("email_value") or it.get("value") or []
+                        def _split_emails(s: str) -> List[str]:
+                            try:
+                                import re as _re
+                                return [x.strip() for x in _re.split(r"[;,]", s) if x and x.strip()]
+                            except Exception:
+                                return [s]
                         if isinstance(ev, str):
-                            pm_emails = [ev]
+                            pm_emails = _split_emails(ev)
                         elif isinstance(ev, list):
-                            pm_emails = [str(x) for x in ev]
+                            tmp: List[str] = []
+                            for x in ev:
+                                if isinstance(x, str):
+                                    tmp.extend(_split_emails(x))
+                                elif isinstance(x, dict):
+                                    # best effort: try common keys
+                                    for kk in ("email", "value", "text_value"):
+                                        if kk in x and isinstance(x[kk], str):
+                                            tmp.extend(_split_emails(x[kk]))
+                                            break
+                                    else:
+                                        tmp.append(str(x))
+                                else:
+                                    tmp.append(str(x))
+                            pm_emails = tmp
                         break
             pm_emails_l = [e.strip().lower() for e in pm_emails if e]
-            pm_ok = (len(pm_emails_l) == 0) or (expected_pm and expected_pm in pm_emails_l)
-            if one_ok and pm_ok and ff:
+            pm_ok = (len(pm_emails_l) == 0) or (expected_pms_l and any(ep in pm_emails_l for ep in expected_pms_l))
+            if all_ok:
+                kept_by_all += 1
+            if one_ok:
+                kept_by_one_of += 1
+            if pm_ok:
+                kept_by_pm += 1
+            if all_ok and one_ok and pm_ok and ff:
                 selected_features.append(ff)
         used_feature_tag_filter = True
         if debug:
-            console.log(f"Feature-tag selected features: {len(selected_features)} (from {len(details)})")
+            console.log(f"After filters: selected_features={len(selected_features)} (all_kept={kept_by_all}, one_of_kept={kept_by_one_of}, pm_kept={kept_by_pm})")
     else:
         # Fallback path (no release_ids): scan product epics (unchanged)
         for e in client.iter_product_epics(product["id"], tag=None):
@@ -217,7 +257,7 @@ def check(
                 cfg.fields,
                 required_tag_all=required_tags,
                 required_tag_one_of=required_one_of,
-                pm_owner_expect=pm_owner,
+                pm_owner_expect=expected_pms_raw,
             )
             results.append({
                 "id": res.epic_id,
@@ -234,7 +274,7 @@ def check(
                 cfg.fields,
                 required_tag_all=required_tags,
                 required_tag_one_of=required_one_of,
-                pm_owner_expect=pm_owner,
+                pm_owner_expect=[p.strip() for p in str(pm_owner or cfg.filters.pm_owner or '').split(',') if p and p.strip()],
             )
             # Keep some lightweight projection for table rendering
             results.append({
@@ -368,9 +408,12 @@ def check(
                 "dev_owner": lambda r: (r.get("dev_owner") or "").lower(),
                 "priority": lambda r: (r.get("priority") or "").lower(),
             }
-            kf = keymap_v.get((sort_by or "").strip().lower())
+            k = (sort_by or "").strip().lower()
+            kf = keymap_v.get(k)
             if kf:
                 verify_rows = sorted(verify_rows, key=kf)
+            elif debug:
+                console.log(f"[debug] Unknown --sort key '{sort_by}'. Known: {', '.join(keymap_v.keys())}")
 
         # Render table
         vt = Table(title="🔎 Verification (all items & field values)", expand=True, show_lines=False)
@@ -397,6 +440,8 @@ def check(
                 str(r.get("master_epic","")), r.get("github",""), r.get("tag_scanners",""), r.get("pm_owner",""),
                 r.get("dev_owner",""), r.get("gtm_themes",""), r.get("priority",""),
             )
+        if debug:
+            console.log(f"Verify rows rendered: {len(verify_rows)} (features_mode={bool(resolved_release_ids and ('used_feature_tag_filter' in locals() and used_feature_tag_filter))})")
         console.print(vt)
         # In verify mode, print only the verification table and exit without OK/Issues summary
         raise typer.Exit(0)
@@ -411,14 +456,30 @@ def check(
     console.print()
     if not_beautiful:
         console.print(table_issues(not_beautiful))
-        # Rule summary
-        from collections import Counter
+        # Rule summary (overall and per release)
+        from collections import Counter, defaultdict
+        # Per release
+        by_rel = defaultdict(list)
+        for r in not_beautiful:
+            rel = (r.get("release_name") or "<no release>")
+            by_rel[rel].append(r)
+        if by_rel:
+            console.print("\n[bold]Top issues by release:[/]")
+            for rel in sorted(by_rel.keys(), key=lambda x: (str(x) or "").lower()):
+                cc = Counter()
+                for rr in by_rel[rel]:
+                    for p in rr.get("problems", []):
+                        cc[p] += 1
+                console.print(f"[underline]{rel}[/]")
+                for k, v in cc.most_common():
+                    console.print(f"  • {k}: [bold]{v}[/]")
+        # Overall
         c = Counter()
         for r in not_beautiful:
             for p in r.get("problems", []):
                 c[p] += 1
         if c:
-            console.print("\n[bold]Top issues:[/]")
+            console.print("\n[bold]Top issues (overall):[/]")
             for k, v in c.most_common():
                 console.print(f"  • {k}: [bold]{v}[/]")
         console.print("\n[bold red]Action needed:[/] bring these epics to beauty with love, colors and discipline 💪🌈")

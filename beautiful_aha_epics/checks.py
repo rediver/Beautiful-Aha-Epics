@@ -59,7 +59,7 @@ class BeautyResult:
     problems: List[str]
 
 
-def evaluate_epic(epic: Dict, fields: FieldMap, *, required_tag_all: List[str], required_tag_one_of: List[str], pm_owner_expect: str | None) -> BeautyResult:
+def evaluate_epic(epic: Dict, fields: FieldMap, *, required_tag_all: List[str], required_tag_one_of: List[str], pm_owner_expect: str | List[str] | None) -> BeautyResult:
     problems: List[str] = []
 
     ref = epic.get("reference_num") or epic.get("reference_num_with_prefix") or epic.get("reference_num_with_sequence") or epic.get("reference_num_prefix") or epic.get("id")
@@ -134,12 +134,33 @@ def evaluate_epic(epic: Dict, fields: FieldMap, *, required_tag_all: List[str], 
         if not any(t.lower() in tags for t in required_tag_one_of):
             problems.append("Missing at least one of tags: " + ", ".join(required_tag_one_of))
 
-    # Product Management owner
-    pm_value = _norm_text(custom.get(fields.product_management_owner))
-    if not pm_value:
+    # Product Management owner — support list and CSV expectations
+    pm_raw = custom.get(fields.product_management_owner)
+    pm_vals: List[str] = []
+    if isinstance(pm_raw, list):
+        pm_vals = [str(x) for x in pm_raw]
+    elif isinstance(pm_raw, str):
+        try:
+            pm_vals = [s.strip() for s in re.split(r"[;,]", pm_raw) if s and s.strip()]
+        except Exception:
+            pm_vals = [pm_raw]
+    elif pm_raw is not None:
+        pm_vals = [str(pm_raw)]
+    pm_vals_l = [s.strip().lower() for s in pm_vals if s]
+    if len(pm_vals_l) == 0:
         problems.append("Product Management owner is empty")
-    elif pm_owner_expect and pm_value.strip().lower() != str(pm_owner_expect).strip().lower():
-        problems.append(f"Product Management owner not '{pm_owner_expect}' (is '{pm_value}')")
+    else:
+        exp_list: List[str] = []
+        if pm_owner_expect:
+            if isinstance(pm_owner_expect, str):
+                exp_list = [p.strip() for p in pm_owner_expect.split(",") if p and p.strip()]
+            elif isinstance(pm_owner_expect, list):
+                exp_list = [str(p).strip() for p in pm_owner_expect if str(p).strip()]
+        exp_set = {p.strip().lower() for p in exp_list}
+        if exp_set and not (set(pm_vals_l) & exp_set):
+            problems.append(
+                "Product Management owner not one of '" + ", ".join(sorted(exp_list)) + "' (is '" + ", ".join(pm_vals) + "')"
+            )
 
     # Development owner
     if not _norm_text(custom.get(fields.development_owner)):
@@ -172,7 +193,7 @@ def evaluate_epic(epic: Dict, fields: FieldMap, *, required_tag_all: List[str], 
     )
 
 
-def evaluate_feature(feature: Dict, fields: FieldMap, *, required_tag_all: List[str], required_tag_one_of: List[str], pm_owner_expect: str | None) -> BeautyResult:
+def evaluate_feature(feature: Dict, fields: FieldMap, *, required_tag_all: List[str], required_tag_one_of: List[str], pm_owner_expect: str | List[str] | None) -> BeautyResult:
     problems: List[str] = []
 
     ref = feature.get("reference_num") or feature.get("id")
@@ -257,12 +278,33 @@ def evaluate_feature(feature: Dict, fields: FieldMap, *, required_tag_all: List[
         if not any(t.lower() in tags for t in required_tag_one_of):
             problems.append("Missing at least one of tags: " + ", ".join(required_tag_one_of))
 
-    # Product Management owner
-    pm_value = _norm_text(custom.get(fields.product_management_owner))
-    if not pm_value:
+    # Product Management owner — support list and CSV expectations
+    pm_raw = custom.get(fields.product_management_owner)
+    pm_vals: List[str] = []
+    if isinstance(pm_raw, list):
+        pm_vals = [str(x) for x in pm_raw]
+    elif isinstance(pm_raw, str):
+        try:
+            pm_vals = [s.strip() for s in re.split(r"[;,]", pm_raw) if s and s.strip()]
+        except Exception:
+            pm_vals = [pm_raw]
+    elif pm_raw is not None:
+        pm_vals = [str(pm_raw)]
+    pm_vals_l = [s.strip().lower() for s in pm_vals if s]
+    if len(pm_vals_l) == 0:
         problems.append("Product Management owner is empty")
-    elif pm_owner_expect and pm_value.strip().lower() != pm_owner_expect.strip().lower():
-        problems.append(f"Product Management owner not '{pm_owner_expect}' (is '{pm_value}')")
+    else:
+        exp_list: List[str] = []
+        if pm_owner_expect:
+            if isinstance(pm_owner_expect, str):
+                exp_list = [p.strip() for p in pm_owner_expect.split(",") if p and p.strip()]
+            elif isinstance(pm_owner_expect, list):
+                exp_list = [str(p).strip() for p in pm_owner_expect if str(p).strip()]
+        exp_set = {p.strip().lower() for p in exp_list}
+        if exp_set and not (set(pm_vals_l) & exp_set):
+            problems.append(
+                "Product Management owner not one of '" + ", ".join(sorted(exp_list)) + "' (is '" + ", ".join(pm_vals) + "')"
+            )
 
     # Development owner
     if not _norm_text(custom.get(fields.development_owner)):

@@ -25,7 +25,8 @@ filters:
     - scanners
   tags_one_of:
     - "lineage dev commited"
-  pm_owner: "wojtek smajda"
+  # Comma-separated list supported
+  pm_owner: "wojciech.smajda@ibm.com, Yurii.Plakhtii@ibm.com"
 fields:
   solution_value_statement: solution_value_statement
   risk_status: risk_status
