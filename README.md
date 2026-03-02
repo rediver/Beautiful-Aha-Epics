@@ -54,6 +54,11 @@ fields:
 # or
 ./beauty -v
 ```
+- Export CSV with the same columns as --verify:
+```bash
+./beauty --export               # writes bae_export.csv
+./beauty -e --export-path out.csv
+```
 - Sort output (works with verify and base results):
 ```bash
 ./beauty -v -s status      # by status

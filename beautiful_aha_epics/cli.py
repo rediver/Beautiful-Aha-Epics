@@ -16,6 +16,7 @@ from .util import banner, table_ok, table_issues
 from rich.table import Table
 from typing import Set
 import re
+import csv
 
 app = typer.Typer(
     add_completion=False,
@@ -51,6 +52,8 @@ def check(
     pm_owner: Optional[str] = typer.Option(None, help="Expected Product Management owner value (custom field)"),
     json_output: bool = typer.Option(False, "--json", help="Print machine JSON instead of fancy tables"),
     verify: bool = typer.Option(False, "--verify", "-v", help="Show a verification table with all fields we validate (no description text, only a checkmark)"),
+    export_flag: bool = typer.Option(False, "--export", "-e", help="Export CSV with the same columns as --verify (writes to --export-path or bae_export.csv)"),
+    export_path: Optional[str] = typer.Option(None, "--export-path", help="CSV output path (default: bae_export.csv or $BAE_EXPORT_PATH)"),
     sort_by: Optional[str] = typer.Option(None, "--sort", "-s", help="Sort results by column. Examples: ref,name,release,status,pm_owner,dev_owner,priority"),
     debug: bool = typer.Option(False, "--debug", help="Verbose logs for troubleshooting"),
 ):
@@ -301,92 +304,90 @@ def check(
     beautiful = [r for r in results if r["ok"]]
     not_beautiful = [r for r in results if not r["ok"]]
 
-    if json_output and not verify:
+    if json_output and not verify and not export_flag:
         typer.echo(json.dumps({"ok": beautiful, "not_ok": not_beautiful}, ensure_ascii=False, indent=2))
         raise typer.Exit(0)
 
-    # Pretty print with emojis and colors
-    console.rule("🦋 Results 🦋")
+    # Helper functions reused by --verify and --export
+    def _status_value(obj: dict) -> str:
+        status = ((obj.get("workflow_status") or {}).get("name") or obj.get("status") or obj.get("workflow_status_name") or "").strip()
+        wst = obj.get("workflow_status_times") or []
+        for rec in wst or []:
+            if rec and rec.get("ended_at") in (None, "") and rec.get("status_name"):
+                status = rec.get("status_name")
+        return str(status or "")
 
-    # Optional verification view with all fields
-    if verify:
-        def _status_value(obj: dict) -> str:
-            status = ((obj.get("workflow_status") or {}).get("name") or obj.get("status") or obj.get("workflow_status_name") or "").strip()
-            wst = obj.get("workflow_status_times") or []
-            for rec in wst or []:
-                if rec and rec.get("ended_at") in (None, "") and rec.get("status_name"):
-                    status = rec.get("status_name")
-            return str(status or "")
+    def _desc_ok(obj: dict, is_feature: bool) -> bool:
+        if is_feature:
+            desc = obj.get("description", {})
+            body = (desc or {}).get("body") if isinstance(desc, dict) else desc
+            return bool(_norm_text(body))
+        else:
+            return bool(_norm_text(obj.get("description")))
 
-        def _desc_ok(obj: dict, is_feature: bool) -> bool:
-            if is_feature:
-                desc = obj.get("description", {})
-                body = (desc or {}).get("body") if isinstance(desc, dict) else desc
-                return bool(_norm_text(body))
-            else:
-                return bool(_norm_text(obj.get("description")))
+    def _github_present(obj: dict, custom: dict) -> bool:
+        # integration_fields first
+        for f in obj.get("integration_fields", []) or []:
+            vals = [f.get("url"), f.get("name"), f.get("value"), f.get("service_name")]
+            if any(((v or "").lower().find("github") >= 0) or ("git" in (v or '').lower() and "http" in (v or '').lower()) for v in vals):
+                return True
+        # custom fields mapping
+        for k in cfg.fields.github_link:
+            v = str(custom.get(k) or "")
+            if ("github" in v.lower()) or ("git" in v.lower() and "http" in v.lower()):
+                return True
+        return False
 
-        def _github_present(obj: dict, custom: dict) -> bool:
-            # integration_fields first
-            for f in obj.get("integration_fields", []) or []:
-                vals = [f.get("url"), f.get("name"), f.get("value"), f.get("service_name")]
-                if any(((v or "").lower().find("github") >= 0) or ("git" in (v or '').lower() and "http" in (v or '').lower()) for v in vals):
-                    return True
-            # custom fields mapping
-            for k in cfg.fields.github_link:
-                v = str(custom.get(k) or "")
-                if ("github" in v.lower()) or ("git" in v.lower() and "http" in v.lower()):
-                    return True
-            return False
+    def _has_scanners(obj: dict) -> bool:
+        tags = set([str(t).strip().lower() for t in (obj.get("tags") or [])])
+        return "scanners" in tags
 
-        def _has_scanners(obj: dict) -> bool:
-            tags = set([str(t).strip().lower() for t in (obj.get("tags") or [])])
-            return "scanners" in tags
+    def _release_name(obj: dict) -> str:
+        rel = obj.get("release")
+        if isinstance(rel, dict):
+            return str(rel.get("name") or "")
+        return str(obj.get("release_name") or "")
 
-        def _release_name(obj: dict) -> str:
-            rel = obj.get("release")
-            if isinstance(rel, dict):
-                return str(rel.get("name") or "")
-            return str(obj.get("release_name") or "")
+    def _release_dates_ok(obj: dict) -> bool:
+        rel = obj.get("release")
+        if isinstance(rel, dict):
+            return bool(rel.get("start_date") and rel.get("release_date"))
+        # If only name present, we don't know dates -> treat as False when verify expects both
+        return False
 
-        def _release_dates_ok(obj: dict) -> bool:
-            rel = obj.get("release")
-            if isinstance(rel, dict):
-                return bool(rel.get("start_date") and rel.get("release_date"))
-            # If only name present, we don't know dates -> treat as False when verify expects both
-            return False
+    def _pm_owner(custom: dict) -> str:
+        v = custom.get(cfg.fields.product_management_owner)
+        if isinstance(v, list):
+            return ", ".join([str(x) for x in v])
+        return str(v or "")
 
-        def _pm_owner(custom: dict) -> str:
-            v = custom.get(cfg.fields.product_management_owner)
-            if isinstance(v, list):
-                return ", ".join([str(x) for x in v])
-            return str(v or "")
+    def _mk_row(obj: dict, is_feature: bool) -> dict:
+        custom = _custom_to_dict(obj.get("custom_fields"))
+        row = {
+            "ref": str(obj.get("reference_num") or obj.get("reference_num_with_prefix") or obj.get("id") or ""),
+            "name": str(obj.get("name") or obj.get("title") or ""),
+            "release": _release_name(obj),
+            "desc_ok": "✅" if _desc_ok(obj, is_feature) else "❌",
+            "status": _status_value(obj),
+            "solution_value": str(custom.get(cfg.fields.solution_value_statement) or (custom.get("client_value_statement") if is_feature else "") or ""),
+            "risk_status": str(custom.get(cfg.fields.risk_status) or ""),
+            "commitment": str(custom.get(cfg.fields.commitment) or (custom.get("committed") if is_feature else "") or ""),
+            "master_epic": (
+                "yes" if (is_feature and (isinstance(obj.get("epic"), dict) or isinstance(obj.get("master_feature"), dict))) else str(custom.get(cfg.fields.master_epic) or "")
+            ),
+            "github": "✅" if _github_present(obj, custom) else "❌",
+            "tag_scanners": "✅" if _has_scanners(obj) else "❌",
+            "pm_owner": _pm_owner(custom),
+            "dev_owner": str(custom.get(cfg.fields.development_owner) or ""),
+            "gtm_themes": str(custom.get(cfg.fields.ibm_software_gtm_themes) or ""),
+            "priority": str(custom.get(cfg.fields.priority_data_ai) or custom.get("priority") or ""),
+            "rel_dates_ok": "✅" if _release_dates_ok(obj) else "❌",
+        }
+        return row
 
-        def _mk_row(obj: dict, is_feature: bool) -> dict:
-            custom = _custom_to_dict(obj.get("custom_fields"))
-            row = {
-                "ref": str(obj.get("reference_num") or obj.get("reference_num_with_prefix") or obj.get("id") or ""),
-                "name": str(obj.get("name") or obj.get("title") or ""),
-                "release": _release_name(obj),
-                "desc_ok": "✅" if _desc_ok(obj, is_feature) else "❌",
-                "status": _status_value(obj),
-                "solution_value": str(custom.get(cfg.fields.solution_value_statement) or (custom.get("client_value_statement") if is_feature else "") or ""),
-                "risk_status": str(custom.get(cfg.fields.risk_status) or ""),
-                "commitment": str(custom.get(cfg.fields.commitment) or (custom.get("committed") if is_feature else "") or ""),
-                "master_epic": (
-                    "yes" if (is_feature and (isinstance(obj.get("epic"), dict) or isinstance(obj.get("master_feature"), dict))) else str(custom.get(cfg.fields.master_epic) or "")
-                ),
-                "github": "✅" if _github_present(obj, custom) else "❌",
-                "tag_scanners": "✅" if _has_scanners(obj) else "❌",
-                "pm_owner": _pm_owner(custom),
-                "dev_owner": str(custom.get(cfg.fields.development_owner) or ""),
-                "gtm_themes": str(custom.get(cfg.fields.ibm_software_gtm_themes) or ""),
-                "priority": str(custom.get(cfg.fields.priority_data_ai) or custom.get("priority") or ""),
-                "rel_dates_ok": "✅" if _release_dates_ok(obj) else "❌",
-            }
-            return row
-
-        # Build rows from the same evaluation pool as we used above
+    # If verify/export requested, build verify-style rows from the same pool
+    verify_rows = None
+    if verify or export_flag:
         verify_rows = []
         if resolved_release_ids and ('used_feature_tag_filter' in locals() and used_feature_tag_filter):
             for f in selected_features:
@@ -394,8 +395,7 @@ def check(
         else:
             for e in full_epics:
                 verify_rows.append(_mk_row(e, is_feature=False))
-
-        # Sorting for verify view
+        # Sorting for verify/export view
         if sort_by:
             keymap_v = {
                 "ref": lambda r: (r.get("ref") or "").lower(),
@@ -415,7 +415,27 @@ def check(
             elif debug:
                 console.log(f"[debug] Unknown --sort key '{sort_by}'. Known: {', '.join(keymap_v.keys())}")
 
-        # Render table
+        # Export to CSV if requested
+        if export_flag:
+            path = export_path or os.getenv("BAE_EXPORT_PATH") or "bae_export.csv"
+            cols = [
+                "ref","name","release","rel_dates_ok","desc_ok","status",
+                "solution_value","risk_status","commitment","master_epic","github",
+                "tag_scanners","pm_owner","dev_owner","gtm_themes","priority",
+            ]
+            try:
+                with open(path, "w", encoding="utf-8", newline="") as f:
+                    w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
+                    w.writeheader()
+                    for r in verify_rows:
+                        w.writerow({k: r.get(k, "") for k in cols})
+                console.print(f"[green]Exported {len(verify_rows)} rows to[/] [bold]{path}[/]")
+            except Exception as ex:
+                console.print(f"[red]Failed to export CSV:[/] {ex}")
+                raise typer.Exit(2)
+
+    # Pretty print with emojis and colors
+    if verify:
         vt = Table(title="🔎 Verification (all items & field values)", expand=True, show_lines=False)
         vt.add_column("Ref", style="cyan", no_wrap=True)
         vt.add_column("Name", style="white")
@@ -433,7 +453,7 @@ def check(
         vt.add_column("Dev Owner", style="white")
         vt.add_column("GTM Themes", style="white")
         vt.add_column("Priority", style="white", no_wrap=True)
-        for r in verify_rows:
+        for r in verify_rows or []:
             vt.add_row(
                 r.get("ref",""), r.get("name",""), r.get("release",""), r.get("rel_dates_ok",""), r.get("desc_ok",""),
                 r.get("status",""), r.get("solution_value",""), r.get("risk_status",""), r.get("commitment",""),
@@ -441,10 +461,15 @@ def check(
                 r.get("dev_owner",""), r.get("gtm_themes",""), r.get("priority",""),
             )
         if debug:
-            console.log(f"Verify rows rendered: {len(verify_rows)} (features_mode={bool(resolved_release_ids and ('used_feature_tag_filter' in locals() and used_feature_tag_filter))})")
+            console.log(f"Verify rows rendered: {len(verify_rows or [])} (features_mode={bool(resolved_release_ids and ('used_feature_tag_filter' in locals() and used_feature_tag_filter))})")
         console.print(vt)
-        # In verify mode, print only the verification table and exit without OK/Issues summary
         raise typer.Exit(0)
+
+    # If only --export was requested, exit after exporting (no base report)
+    if export_flag:
+        raise typer.Exit(0)
+
+    console.rule("🦋 Results 🦋")
 
     if not beautiful and not not_beautiful:
         console.print("[yellow]🤷 No epics matched your filters.[/] [dim](Try relaxing releases/tags or check product path.)[/]")
