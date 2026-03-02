@@ -59,6 +59,8 @@ fields:
 ./beauty --export               # writes bae_export.csv
 ./beauty -e --export-path out.csv
 ```
+
+CSV uses yes/no (not emojis) for: rel_dates_ok, desc_ok, github, tag_scanners.
 - Sort output (works with verify and base results):
 ```bash
 ./beauty -v -s status      # by status

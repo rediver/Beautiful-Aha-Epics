@@ -427,8 +427,20 @@ def check(
                 with open(path, "w", encoding="utf-8", newline="") as f:
                     w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
                     w.writeheader()
+                    yn_cols = {"rel_dates_ok", "desc_ok", "github", "tag_scanners"}
+                    def _to_yes_no(v: object) -> str:
+                        s = str(v or "").strip().lower()
+                        if s in {"✅".lower(), "yes", "true", "1", "y"}:
+                            return "yes"
+                        if s in {"❌".lower(), "no", "false", "0", "n", ""}:
+                            return "no"
+                        # Fallback: treat non-empty as yes
+                        return "yes" if s else "no"
                     for r in verify_rows:
-                        w.writerow({k: r.get(k, "") for k in cols})
+                        row = {k: r.get(k, "") for k in cols}
+                        for k in yn_cols:
+                            row[k] = _to_yes_no(row.get(k, ""))
+                        w.writerow(row)
                 console.print(f"[green]Exported {len(verify_rows)} rows to[/] [bold]{path}[/]")
             except Exception as ex:
                 console.print(f"[red]Failed to export CSV:[/] {ex}")
