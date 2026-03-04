@@ -5,6 +5,7 @@ bae.config.yaml
 .venv/
 __pycache__/
 *.pyc
+*.csv
 
 # macOS
 .DS_Store

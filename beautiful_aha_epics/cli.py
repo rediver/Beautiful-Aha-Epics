@@ -52,7 +52,7 @@ def check(
     pm_owner: Optional[str] = typer.Option(None, help="Expected Product Management owner value (custom field)"),
     json_output: bool = typer.Option(False, "--json", help="Print machine JSON instead of fancy tables"),
     verify: bool = typer.Option(False, "--verify", "-v", help="Show a verification table with all fields we validate (no description text, only a checkmark)"),
-    export_flag: bool = typer.Option(False, "--export", "-e", help="Export CSV with the same columns as --verify (writes to --export-path or bae_export.csv)"),
+    export_flag: bool = typer.Option(False, "--export", "-e", help="Export CSV similar to --verify. Writes to --export-path or bae_export.csv"),
     export_path: Optional[str] = typer.Option(None, "--export-path", help="CSV output path (default: bae_export.csv or $BAE_EXPORT_PATH)"),
     sort_by: Optional[str] = typer.Option(None, "--sort", "-s", help="Sort results by column. Examples: ref,name,release,status,pm_owner,dev_owner,priority"),
     debug: bool = typer.Option(False, "--debug", help="Verbose logs for troubleshooting"),
@@ -421,7 +421,7 @@ def check(
             cols = [
                 "ref","name","release","rel_dates_ok","desc_ok","status",
                 "solution_value","risk_status","commitment","master_epic","github",
-                "tag_scanners","pm_owner","dev_owner","gtm_themes","priority",
+                "tag_scanners","pm_owner","dev_owner","gtm_themes",
             ]
             try:
                 with open(path, "w", encoding="utf-8", newline="") as f:
