@@ -39,3 +39,12 @@ fields:
   development_owner: development_owner
   ibm_software_gtm_themes: ibm_software_gtm_themes
   priority_data_ai: priority_data_ai
+
+github:
+  host: github.ibm.com  # or github.com
+  api_base: https://github.ibm.com/api/v3
+  graphql_url: https://github.ibm.com/api/graphql
+  auth:
+    method: gh          # prefer gh CLI for Enterprise SSO
+    token: null         # do not store tokens in repo; env/gh is preferred
+    token_env: GITHUB_TOKEN

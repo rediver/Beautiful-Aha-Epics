@@ -17,6 +17,7 @@ from rich.table import Table
 from typing import Set
 import re
 import csv
+from .github_client import GitHubClient
 
 app = typer.Typer(
     add_completion=False,
@@ -55,6 +56,7 @@ def check(
     export_flag: bool = typer.Option(False, "--export", "-e", help="Export CSV similar to --verify. Writes to --export-path or bae_export.csv"),
     export_path: Optional[str] = typer.Option(None, "--export-path", help="CSV output path (default: bae_export.csv or $BAE_EXPORT_PATH)"),
     sort_by: Optional[str] = typer.Option(None, "--sort", "-s", help="Sort results by column. Examples: ref,name,release,status,pm_owner,dev_owner,priority"),
+    github_flag: bool = typer.Option(False, "--github", "--gh", help="Show a table with Aha! status and GitHub project status for items that have a GitHub link"),
     debug: bool = typer.Option(False, "--debug", help="Verbose logs for troubleshooting"),
 ):
     """Validate epics and print a glorious, colorful report with emojis and ASCII art."""
@@ -338,6 +340,33 @@ def check(
                 return True
         return False
 
+    def _github_links(obj: dict, custom: dict) -> List[str]:
+        links: List[str] = []
+        # integration_fields with URLs
+        for f in obj.get("integration_fields", []) or []:
+            u = f.get("url") or f.get("value") or ""
+            if isinstance(u, str) and ("http" in u) and ("git" in u.lower() or "github" in u.lower()):
+                links.append(u)
+        # custom fields
+        for k in cfg.fields.github_link:
+            v = custom.get(k)
+            if isinstance(v, str):
+                if ("http" in v) and ("git" in v.lower() or "github" in v.lower()):
+                    links.append(v)
+            elif isinstance(v, list):
+                for it in v:
+                    if isinstance(it, str) and ("http" in it) and ("git" in it.lower() or "github" in it.lower()):
+                        links.append(it)
+        # normalize & dedup
+        out: List[str] = []
+        seen = set()
+        for u in links:
+            su = (u or "").strip()
+            if su and su not in seen:
+                out.append(su)
+                seen.add(su)
+        return out
+
     def _has_scanners(obj: dict) -> bool:
         tags = set([str(t).strip().lower() for t in (obj.get("tags") or [])])
         return "scanners" in tags
@@ -445,6 +474,113 @@ def check(
             except Exception as ex:
                 console.print(f"[red]Failed to export CSV:[/] {ex}")
                 raise typer.Exit(2)
+
+    # GitHub statuses table (if requested)
+    if github_flag:
+        # choose the pool of items: features mode if used, else epics
+        items_pool: List[dict] = []
+        if resolved_release_ids and ('used_feature_tag_filter' in locals() and used_feature_tag_filter):
+            items_pool = list(selected_features)
+        else:
+            items_pool = list(full_epics)
+
+        # filter only those that have GitHub link(s)
+        rows = []
+        host_set = set()
+        for obj in items_pool:
+            custom = _custom_to_dict(obj.get("custom_fields"))
+            links = _github_links(obj, custom)
+            if not links:
+                continue
+            # derive Aha! status
+            aha_status = _status_value(obj)
+            rows.append({
+                "obj": obj,
+                "ref": str(obj.get("reference_num") or obj.get("reference_num_with_prefix") or obj.get("id") or ""),
+                "name": str(obj.get("name") or obj.get("title") or ""),
+                "aha_status": aha_status,
+                "links": links,
+            })
+            for L in links:
+                parsed = GitHubClient.parse_github_url(L)
+                if parsed:
+                    host_set.add(parsed[0].lower())
+
+        # Prepare GitHub clients per host (respect config.github defaults)
+        gh_clients: dict[str, GitHubClient] = {}
+        # helper to write minimal github config if we detect enterprise host
+        def _ensure_github_cfg(host: str) -> None:
+            try:
+                cfg_path = os.getenv("BAE_CONFIG", DEFAULT_CFG_PATH)
+                data = {}
+                if os.path.exists(cfg_path):
+                    with open(cfg_path, "r", encoding="utf-8") as f:
+                        data = yaml.safe_load(f) or {}
+                g = data.setdefault("github", {})
+                if not g.get("host") or g.get("host") != host:
+                    g["host"] = host
+                    if host != "github.com":
+                        g["api_base"] = f"https://{host}/api/v3"
+                        g["graphql_url"] = f"https://{host}/api/graphql"
+                    g.setdefault("auth", {}).setdefault("method", "gh")
+                    with open(cfg_path, "w", encoding="utf-8") as f:
+                        yaml.safe_dump(data, f, sort_keys=False, allow_unicode=True)
+                    try:
+                        os.chmod(cfg_path, stat.S_IRUSR | stat.S_IWUSR)
+                    except Exception:
+                        pass
+            except Exception:
+                # non-fatal
+                pass
+
+        for h in sorted(host_set):
+            # Prefer values from config when host matches; else derive defaults
+            api_base = cfg.github.api_base if (cfg.github.host and h == cfg.github.host) else None
+            gql_url = cfg.github.graphql_url if (cfg.github.host and h == cfg.github.host) else None
+            try:
+                gh_clients[h] = GitHubClient(host=h, api_base=api_base, graphql_url=gql_url, debug=debug)
+                # Save detected enterprise host if needed
+                if h != "github.com":
+                    _ensure_github_cfg(h)
+            except Exception as ex:
+                console.print(f"[red]GitHub auth failed for host {h}:[/] {ex}")
+
+        # Build and render table
+        t = Table(title="🐙 GitHub statuses", expand=True, show_lines=False)
+        t.add_column("Ref", style="cyan", no_wrap=True)
+        t.add_column("Name", style="white")
+        t.add_column("Aha Status", style="magenta", no_wrap=True)
+        t.add_column("GitHub Status", style="green")
+
+        added = 0
+        for r in rows:
+            statuses: List[str] = []
+            for u in r["links"]:
+                parsed = GitHubClient.parse_github_url(u)
+                if not parsed:
+                    continue
+                host, owner, repo, kind, num = parsed
+                cli = gh_clients.get(host.lower())
+                if not cli:
+                    continue
+                try:
+                    st = cli.fetch_project_statuses(owner, repo, num, is_pull=(kind == "pull"))
+                    if st:
+                        # prefix with short repo#num if multiple links
+                        prefix = f"{owner}/{repo}#{num}: " if len(r["links"]) > 1 else ""
+                        statuses.append(prefix + "; ".join(st))
+                except Exception as ex:
+                    if debug:
+                        console.log(f"[debug] GH fetch failed for {u}: {ex}")
+            if statuses:
+                t.add_row(r["ref"], r["name"], r["aha_status"], " | ".join(statuses))
+                added += 1
+
+        if added == 0:
+            console.print("[yellow]No items with GitHub links (or unable to fetch statuses).[/]")
+        else:
+            console.print(t)
+        raise typer.Exit(0)
 
     # Pretty print with emojis and colors
     if verify:

@@ -34,6 +34,22 @@ class Auth:
 
 
 @dataclass
+class GitHubAuth:
+    # method: 'gh' -> obtain token via GitHub CLI; 'env' -> read env var; 'token' -> use token value (not recommended)
+    method: str = "gh"
+    token: Optional[str] = None  # we avoid storing this; env or gh is preferred
+    token_env: Optional[str] = None  # e.g., GITHUB_TOKEN or GH_TOKEN
+
+
+@dataclass
+class GitHubConfig:
+    host: str = "github.com"
+    api_base: Optional[str] = None  # e.g., https://github.ibm.com/api/v3
+    graphql_url: Optional[str] = None  # e.g., https://github.ibm.com/api/graphql
+    auth: GitHubAuth = field(default_factory=GitHubAuth)
+
+
+@dataclass
 class AppConfig:
     product_name: Optional[str] = None
     product_key: Optional[str] = None  # e.g., DATALIN from https://{account}.aha.io/products/DATALIN/...
@@ -42,6 +58,7 @@ class AppConfig:
     filters: Filters = field(default_factory=Filters)
     fields: FieldMap = field(default_factory=FieldMap)
     auth: Auth = field(default_factory=Auth)
+    github: GitHubConfig = field(default_factory=GitHubConfig)
 
     @staticmethod
     def load(path: Optional[str] = None) -> "AppConfig":
@@ -69,9 +86,20 @@ class AppConfig:
         for k in FieldMap().__dict__.keys():
             if k in m_raw and m_raw[k] is not None:
                 setattr(cfg.fields, k, m_raw[k])
-        # Auth
+        # Auth (Aha!)
         a_raw = raw.get("auth", {})
         cfg.auth.token = a_raw.get("token") or os.getenv("BAE_AHA_TOKEN") or os.getenv("AHA_API_TOKEN")
+        # GitHub config (optional)
+        g_raw = raw.get("github", {})
+        if isinstance(g_raw, dict):
+            cfg.github.host = g_raw.get("host") or cfg.github.host
+            cfg.github.api_base = g_raw.get("api_base") or cfg.github.api_base
+            cfg.github.graphql_url = g_raw.get("graphql_url") or cfg.github.graphql_url
+            a2 = g_raw.get("auth", {}) or {}
+            if isinstance(a2, dict):
+                cfg.github.auth.method = a2.get("method") or cfg.github.auth.method
+                cfg.github.auth.token = a2.get("token") or None
+                cfg.github.auth.token_env = a2.get("token_env") or None
         return cfg
 
     @staticmethod
@@ -116,6 +144,16 @@ class AppConfig:
                 "development_owner": "development_owner",
                 "ibm_software_gtm_themes": "ibm_software_gtm_themes",
                 "priority_data_ai": "priority_data_ai",
+            },
+            "github": {
+                "host": "github.ibm.com",  # or github.com
+                "api_base": "https://github.ibm.com/api/v3",
+                "graphql_url": "https://github.ibm.com/api/graphql",
+                "auth": {
+                    "method": "gh",  # prefer GitHub CLI for Enterprise SSO
+                    "token": None,
+                    "token_env": "GITHUB_TOKEN",
+                },
             },
         }
         with open(path, "w", encoding="utf-8") as f:
