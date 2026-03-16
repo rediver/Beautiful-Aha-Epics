@@ -57,6 +57,7 @@ def check(
     export_path: Optional[str] = typer.Option(None, "--export-path", help="CSV output path (default: bae_export.csv or $BAE_EXPORT_PATH)"),
     sort_by: Optional[str] = typer.Option(None, "--sort", "-s", help="Sort results by column. Examples: ref,name,release,status,pm_owner,dev_owner,priority"),
     github_flag: bool = typer.Option(False, "--github", "--gh", help="Show a table with Aha! status and GitHub project status for items that have a GitHub link"),
+    github_release: Optional[List[str]] = typer.Option(None, "--github-release", help="Filter --github table by Aha Release names (multiple). If omitted, show all."),
     debug: bool = typer.Option(False, "--debug", help="Verbose logs for troubleshooting"),
 ):
     """Validate epics and print a glorious, colorful report with emojis and ASCII art."""
@@ -506,6 +507,14 @@ def check(
                 parsed = GitHubClient.parse_github_url(L)
                 if parsed:
                     host_set.add(parsed[0].lower())
+
+        # Filter by --github-release if specified
+        if github_release:
+            filtered_rows = []
+            for r in rows:
+                if r["release"].lower() in [rel.lower() for rel in github_release]:
+                    filtered_rows.append(r)
+            rows = filtered_rows
 
         # Prepare GitHub clients per host (respect config.github defaults)
         gh_clients: dict[str, GitHubClient] = {}

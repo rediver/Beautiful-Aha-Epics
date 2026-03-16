@@ -67,6 +67,12 @@ CSV uses yes/no (not emojis) for: rel_dates_ok, desc_ok, github, tag_scanners.
 ./beauty -v -s release     # by release name
 ./beauty -s ref            # by reference in base report
 ```
+- GitHub statuses table (show Aha! status vs GitHub project status for items with GitHub links):
+```bash
+./beauty --github                    # show all items with GitHub links
+./beauty --gh --github-release "June 2026 - IKC 5.4 and DI 2.4"  # filter by release
+./beauty --github --github-release "Release 1" --github-release "Release 2"  # multiple releases
+```
 - Debug logs (verbose output for troubleshooting):
 ```bash
 ./beauty --debug
