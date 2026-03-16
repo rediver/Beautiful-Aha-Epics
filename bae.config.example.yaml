@@ -48,3 +48,9 @@ github:
     method: gh          # prefer gh CLI for Enterprise SSO
     token: null         # do not store tokens in repo; env/gh is preferred
     token_env: GITHUB_TOKEN
+
+# Mapping from Aha! workflow status names to expected GitHub project status names
+status_mapping:
+  "Ready for Design": "In Progress"
+  "In Development": "In Progress"
+  "Dev Complete": "Done"

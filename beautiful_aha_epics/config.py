@@ -59,6 +59,7 @@ class AppConfig:
     fields: FieldMap = field(default_factory=FieldMap)
     auth: Auth = field(default_factory=Auth)
     github: GitHubConfig = field(default_factory=GitHubConfig)
+    status_mapping: Dict[str, str] = field(default_factory=dict)  # Aha status to expected GitHub status mapping
 
     @staticmethod
     def load(path: Optional[str] = None) -> "AppConfig":
@@ -98,8 +99,10 @@ class AppConfig:
             a2 = g_raw.get("auth", {}) or {}
             if isinstance(a2, dict):
                 cfg.github.auth.method = a2.get("method") or cfg.github.auth.method
-                cfg.github.auth.token = a2.get("token") or None
-                cfg.github.auth.token_env = a2.get("token_env") or None
+                cfg.github.auth.token = a2.get("token") or cfg.github.auth.token
+                cfg.github.auth.token_env = a2.get("token_env") or cfg.github.auth.token_env
+        # Status mapping
+        cfg.status_mapping = dict(raw.get("status_mapping", {}))
         return cfg
 
     @staticmethod

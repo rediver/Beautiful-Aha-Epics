@@ -498,6 +498,7 @@ def check(
                 "obj": obj,
                 "ref": str(obj.get("reference_num") or obj.get("reference_num_with_prefix") or obj.get("id") or ""),
                 "name": str(obj.get("name") or obj.get("title") or ""),
+                "release": _release_name(obj),
                 "aha_status": aha_status,
                 "links": links,
             })
@@ -549,6 +550,7 @@ def check(
         t = Table(title="🐙 GitHub statuses", expand=True, show_lines=False)
         t.add_column("Ref", style="cyan", no_wrap=True)
         t.add_column("Name", style="white")
+        t.add_column("Release", style="magenta")
         t.add_column("Aha Status", style="magenta", no_wrap=True)
         t.add_column("GitHub Status", style="green")
 
@@ -572,12 +574,12 @@ def check(
                 except Exception as ex:
                     if debug:
                         console.log(f"[debug] GH fetch failed for {u}: {ex}")
-            if statuses:
-                t.add_row(r["ref"], r["name"], r["aha_status"], " | ".join(statuses))
-                added += 1
+            gh_status = " | ".join(statuses) if statuses else "No status found"
+            t.add_row(r["ref"], r["name"], r["release"], r["aha_status"], gh_status)
+            added += 1
 
         if added == 0:
-            console.print("[yellow]No items with GitHub links (or unable to fetch statuses).[/]")
+            console.print("[yellow]No items with GitHub links.[/]")
         else:
             console.print(t)
         raise typer.Exit(0)

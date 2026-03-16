@@ -60,7 +60,7 @@ class GitHubClient:
         self._client = httpx.Client(
             headers={
                 "Authorization": f"Bearer {self.token}",
-                "Accept": "application/vnd.github+json",
+                "Accept": "application/json",
             },
             timeout=httpx.Timeout(20.0, connect=20.0),
         )
@@ -115,28 +115,7 @@ class GitHubClient:
 
     def fetch_project_statuses(self, owner: str, repo: str, number: int, *, is_pull: bool | None = None) -> List[str]:
         """Return list of "Project: Status" strings across Projects v2 and classic columns."""
-        q = (
-            "query($owner:String!,$name:String!,$number:Int!){\n"
-            "  repository(owner:$owner,name:$name){\n"
-            "    issue(number:$number){\n"
-            "      projectItems(first:20){nodes{project{title} fieldValues(first:20){nodes{__typename\n"
-            "        ... on ProjectV2ItemFieldSingleSelectValue { field { name } name }\n"
-            "        ... on ProjectV2ItemFieldTextValue { field { name } text }\n"
-            "      }}}}\n"
-            "      projectCards(first:20){nodes{column{name} project{name}}}\n"
-            "      state\n"
-            "    }\n"
-            "    pullRequest(number:$number){\n"
-            "      projectItems(first:20){nodes{project{title} fieldValues(first:20){nodes{__typename\n"
-            "        ... on ProjectV2ItemFieldSingleSelectValue { field { name } name }\n"
-            "        ... on ProjectV2ItemFieldTextValue { field { name } text }\n"
-            "      }}}}\n"
-            "      projectCards(first:20){nodes{column{name} project{name}}}\n"
-            "      state\n"
-            "    }\n"
-            "  }\n"
-            "}"
-        )
+        q = "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){issue(number:$number){projectItems(first:20){nodes{project{title} fieldValues(first:20){nodes{__typename ... on ProjectV2ItemFieldSingleSelectValue { name }}}}} projectCards(first:20){nodes{column{name} project{name}}} state}}}"
         data = self.graphql(q, {"owner": owner, "name": repo, "number": number})
         repo_data = (data or {}).get("repository") or {}
         out: List[str] = []
@@ -148,12 +127,8 @@ class GitHubClient:
                     proj = ((it or {}).get("project") or {}).get("title") or "Project"
                     status_val = None
                     for fv in ((it or {}).get("fieldValues") or {}).get("nodes", []) or []:
-                        field_name = (((fv or {}).get("field") or {}).get("name") or "").strip().lower()
-                        if field_name == "status":
-                            if fv.get("__typename") == "ProjectV2ItemFieldSingleSelectValue":
-                                status_val = fv.get("name")
-                            elif fv.get("__typename") == "ProjectV2ItemFieldTextValue":
-                                status_val = fv.get("text")
+                        if fv.get("__typename") == "ProjectV2ItemFieldSingleSelectValue":
+                            status_val = fv.get("name")
                             if status_val:
                                 out.append(f"{proj}: {status_val}")
                                 break
